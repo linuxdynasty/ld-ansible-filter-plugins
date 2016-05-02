@@ -288,9 +288,9 @@ def get_all_vpcs_info_except(except_ids, region=None):
         except_ids (list): List of vpc ids, that you do not want to match against.
 
     Basic Usage:
-        >>> vpc_ids = ['vpc-98c797fd']
+        >>> vpc_ids = ['vpc-1234567']
         >>> get_all_vpcs_info_except(vpc_ids)
-        ['vpc-68da9d0d', 'vpc-98c797fd']
+        ['vpc-68548239', 'vpc-7654321']
 
     Returns:
         List
@@ -445,7 +445,7 @@ def get_all_route_table_ids_except(vpc_id, region=None):
         region (str): Aws region.
 
     Basic Usage:
-        >>> vpc_id = 'vpc-98c797fd'
+        >>> vpc_id = 'vpc-1234567'
         >>> get_all_route_table_ids_except(vpc_id)
         ['rtb-5f78343a']
 
@@ -525,7 +525,7 @@ def get_subnet_ids(vpc_id, cidrs, region=None):
 
     Basic Usage:
         >>> cidrs = ['10.100.10.0/24', '10.100.12.0/24', '10.100.11.0/24']
-        >>> vpc_id = 'vpc-98c797fd'
+        >>> vpc_id = 'vpc-1234567'
         >>> aws_region = 'us-west-2'
         >>> subnet_ids = get_subnet_ids(vpc_id, cidrs, aws_region)
         >>> print subnet_ids
