@@ -32,6 +32,7 @@
 * get_route53_id
 
 ## AWS Examples.
+Example placement of the filters below *roles/vpc_deploy/vars/main.yml*
 ```yaml
 ---
 aws_region: us-west-2
