@@ -7,7 +7,7 @@ from aws import aws_retry
 
 class RetryTestCase(unittest.TestCase):
 
-    def test_no_retry(self):
+    def test_no_failures(self):
         self.counter = 0
 
         @aws_retry(tries=2, delay=0.1)
@@ -22,14 +22,14 @@ class RetryTestCase(unittest.TestCase):
 	err_msg = {'Error': {'Code': 'InstanceId.NotFound'}}
 
         @aws_retry(tries=2, delay=0.1)
-        def fails_once():
+        def retry_once():
             self.counter += 1
             if self.counter < 2:
                 raise botocore.exceptions.ClientError(err_msg, 'Could not find you')
             else:
                 return 'success'
 
-        r = fails_once()
+        r = retry_once()
         self.assertEqual(r, 'success')
         self.assertEqual(self.counter, 2)
 
