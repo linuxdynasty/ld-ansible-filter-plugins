@@ -54,10 +54,10 @@ def aws_retry(tries=10, delay=3, backoff=2):
                             max_delay *= backoff
                         else:
                             # Return original exception if exception is not a ClientError
-                            break
+                            raise e
                     else:
                         # Return original exception if exception is not a ClientError
-                        break
+                        raise e
             return f(*args, **kwargs)
 
         return retry  # true decorator
