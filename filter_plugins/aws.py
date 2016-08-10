@@ -1,13 +1,71 @@
-import re
 
-import boto3
+from functools import wraps
+import re
+import syslog
+import time
+
+import botocore
 import boto.vpc
 import boto.ec2
 import boto.ec2.autoscale
+import boto3
 
 from ansible import errors
 
+# This list of failures is based on this API Reference
+# http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
+RETRY_ON = [
+    'RequestLimitExceeded', 'Unavailable', 'ServiceUnavailable',
+    'InternalFailure', 'InternalError'
+]
 
+NOT_FOUND = re.compile(r'^\w+.NotFound')
+
+
+def aws_retry(tries=10, delay=3, backoff=2):
+    """ Retry calling the AWS decorated function using an exponential backoff.
+    Kwargs:
+        tries (int): Number of times to try (not retry) before giving up
+            default=10
+        delay (int): Initial delay between retries in seconds
+            default=3
+        backoff (int): backoff multiplier e.g. value of 2 will double the delay each retry
+            default=2
+
+    Basic Usage:
+        >>>@aws_retry()
+           def get_vpc_id_by_name('test', 'us-west-2')
+    """
+    def deco(f):
+        @wraps(f)
+        def retry(*args, **kwargs):
+            max_tries, max_delay = tries, delay
+            while max_tries > 1:
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    if isinstance(e, botocore.exceptions.ClientError):
+                        response_code = e.response['Error']['Code']
+                        if response_code in RETRY_ON or NOT_FOUND.search(response_code):
+                            msg = "{0}: Retrying in {1} seconds...".format(str(e), max_delay)
+                            syslog.syslog(syslog.LOG_INFO, msg)
+                            time.sleep(max_delay)
+                            max_tries -= 1
+                            max_delay *= backoff
+                        else:
+                            # Return original exception if exception is not a ClientError
+                            break
+                    else:
+                        # Return original exception if exception is not a ClientError
+                        break
+            return f(*args, **kwargs)
+
+        return retry  # true decorator
+
+    return deco
+
+
+@aws_retry()
 def aws_client(region, service='ec2', profile=None):
     """ Set the boto3 client with the correct service and AWS profile.
 
@@ -24,8 +82,11 @@ def aws_client(region, service='ec2', profile=None):
     Returns:
         botocore.client.EC2
     """
-    session = boto3.Session(region_name=region, profile_name=profile)
-    return session.client(service)
+    try:
+        session = boto3.Session(region_name=region, profile_name=profile)
+        return session.client(service)
+    except botocore.exceptions.ClientError as e:
+        raise e
 
 
 def get_account_id(region, profile=None):
@@ -45,12 +106,16 @@ def get_account_id(region, profile=None):
     try:
         account_id = client.list_users()['Users'][0]['Arn'].split(':')[4]
         return account_id
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "Failed to retrieve account id"
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "Failed to retrieve account id"
+            )
 
 
+@aws_retry()
 def get_sg_cidrs(name, vpc_id, region, profile=None):
     """
     Args:
@@ -85,22 +150,26 @@ def get_sg_cidrs(name, vpc_id, region, profile=None):
             }
         ]
     }
-    sg_groups = client.describe_security_groups(**params)['SecurityGroups']
-    if len(sg_groups) == 1:
-        cidrs = map(lambda x: x['CidrIp'], sg_groups[0]['IpPermissions'][0]['IpRanges'])
-        return cidrs
-    elif len(sg_groups) > 1:
-        raise errors.AnsibleFilterError(
-            "Too many results for {0}: {1}".format(
-                name, ",".join(sg_groups)
+    try:
+        sg_groups = client.describe_security_groups(**params)['SecurityGroups']
+        if len(sg_groups) == 1:
+            cidrs = map(lambda x: x['CidrIp'], sg_groups[0]['IpPermissions'][0]['IpRanges'])
+            return cidrs
+        elif len(sg_groups) > 1:
+            raise errors.AnsibleFilterError(
+                "Too many results for {0}: {1}".format(
+                    name, ",".join(sg_groups)
+                )
             )
-        )
-    else:
-        raise errors.AnsibleFilterError(
-            "Security Group {0} was not found".format(name)
-        )
+        else:
+            raise errors.AnsibleFilterError(
+                "Security Group {0} was not found".format(name)
+            )
+    except botocore.exceptions.ClientError as e:
+        raise e
 
 
+@aws_retry()
 def get_sg(name, vpc_id, region, profile=None):
     """
     Args:
@@ -124,21 +193,25 @@ def get_sg(name, vpc_id, region, profile=None):
         "tag-value": name,
         "vpc-id": vpc_id
     }
-    sg_groups = connect.get_all_security_groups(filters=filter_by)
-    if len(sg_groups) == 1:
-        return sg_groups[0].id
-    elif len(sg_groups) > 1:
-        raise errors.AnsibleFilterError(
-            "Too many results for {0}: {1}".format(
-                name, ",".join(sg_groups)
+    try:
+        sg_groups = connect.get_all_security_groups(filters=filter_by)
+        if len(sg_groups) == 1:
+            return sg_groups[0].id
+        elif len(sg_groups) > 1:
+            raise errors.AnsibleFilterError(
+                "Too many results for {0}: {1}".format(
+                    name, ",".join(sg_groups)
+                )
             )
-        )
-    else:
-        raise errors.AnsibleFilterError(
-            "Security Group {0} was not found".format(name)
-        )
+        else:
+            raise errors.AnsibleFilterError(
+                "Security Group {0} was not found".format(name)
+            )
+    except botocore.exceptions.ClientError as e:
+        raise e
 
 
+@aws_retry()
 def get_server_certificate(name, region=None, profile=None):
     """ Retrieve the ARN of a server certificate.
     Args:
@@ -163,14 +236,18 @@ def get_server_certificate(name, region=None, profile=None):
             )['ServerCertificate']['ServerCertificateMetadata']
         )
         return_key = cert_meta['Arn']
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "Server Certificate {0} was not found".format(name)
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "Server Certificate {0} was not found".format(name)
+            )
 
     return return_key
 
 
+@aws_retry()
 def get_instance_profile(name, region=None, profile=None):
     """ Retrieve the instance profile of an IAM role.
     Args:
@@ -195,14 +272,18 @@ def get_instance_profile(name, region=None, profile=None):
             )['InstanceProfile']
         )
         return_key = profile['Arn']
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "IAM instance profile {0} was not found".format(name)
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "IAM instance profile {0} was not found".format(name)
+            )
 
     return return_key
 
 
+@aws_retry()
 def get_sqs(name, key='arn', region=None, profile=None):
     """ Retrieve the arn or url a SQS Queue.
     Args:
@@ -233,14 +314,18 @@ def get_sqs(name, key='arn', region=None, profile=None):
             return_key = attributes['QueueArn']
         else:
             return_key = url
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "SQS Queue {0} was not found".format(name)
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "SQS Queue {0} was not found".format(name)
+            )
 
     return return_key
 
 
+@aws_retry()
 def get_dynamodb_base_arn(region=None, profile=None):
     """ Retrieve the base ARN of DynamoDB.
     Kwargs:
@@ -261,12 +346,16 @@ def get_dynamodb_base_arn(region=None, profile=None):
         arn = client.describe_table(TableName=table)['Table']['TableArn']
         base_arn = arn.split('/')[:-1]
         return base_arn[0]
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "Unable to find 1 DynamoDB Table"
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "Unable to find 1 DynamoDB Table"
+            )
 
 
+@aws_retry()
 def get_kinesis_stream_arn(stream_name, region=None, profile=None):
     """ Retrieve the ARN of a kinesis stream.
     Args:
@@ -290,12 +379,16 @@ def get_kinesis_stream_arn(stream_name, region=None, profile=None):
             )['StreamDescription']['StreamARN']
         )
         return arn
-    except Exception:
-        raise errors.AnsibleFilterError(
-            "Unable to find Kinesis Stream {0}".format(stream_name)
-        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "Unable to find Kinesis Stream {0}".format(stream_name)
+            )
 
 
+@aws_retry()
 def zones(region=None, profile=None):
     """ Retrieve a list of available zones in a region.
     Kwargs:
@@ -311,14 +404,16 @@ def zones(region=None, profile=None):
     """
     client = aws_client(region, 'ec2', profile)
     zone_names = (
-        map(lambda x: x['ZoneName'],
+        map(
+            lambda x: x['ZoneName'],
             client.describe_availability_zones()['AvailabilityZones']
-            )
+        )
     )
     zone_names.sort()
     return zone_names
 
 
+@aws_retry()
 def get_all_vpcs_info_except(except_ids, region=None, profile=None):
     """
     Args:
@@ -369,6 +464,7 @@ def get_all_vpcs_info_except(except_ids, region=None, profile=None):
         raise errors.AnsibleFilterError("No vpcs were found")
 
 
+@aws_retry()
 def get_rds_endpoint(region, instance_name, profile=None):
     """Retrieve RDS Endpoint Address.
     Args:
@@ -400,6 +496,7 @@ def get_rds_endpoint(region, instance_name, profile=None):
         )
 
 
+@aws_retry()
 def get_route_table_ids(vpc_id, region=None, profile=None):
     """
     Args:
@@ -438,6 +535,7 @@ def get_route_table_ids(vpc_id, region=None, profile=None):
         raise errors.AnsibleFilterError("No routes were found")
 
 
+@aws_retry()
 def get_all_route_table_ids(region, profile=None):
     """
     Args:
@@ -469,6 +567,7 @@ def get_all_route_table_ids(region, profile=None):
         raise errors.AnsibleFilterError("No routes were found")
 
 
+@aws_retry()
 def get_all_route_table_ids_except(vpc_id, region=None, profile=None):
     """
     Args:
@@ -505,6 +604,7 @@ def get_all_route_table_ids_except(vpc_id, region=None, profile=None):
         raise errors.AnsibleFilterError("No routes were found")
 
 
+@aws_retry()
 def get_vpc_ids_from_names(vpc_names, region=None, profile=None):
     """Return a list of vpc ids from the list of vpc names that were matched.
     Args:
@@ -524,6 +624,7 @@ def get_vpc_ids_from_names(vpc_names, region=None, profile=None):
     return vpc_ids
 
 
+@aws_retry()
 def get_all_route_table_ids_except_vpc_names(vpc_names, region=None,
                                              profile=None):
     """
@@ -565,6 +666,7 @@ def get_all_route_table_ids_except_vpc_names(vpc_names, region=None,
         raise errors.AnsibleFilterError("No routes were found")
 
 
+@aws_retry()
 def get_all_subnet_ids_in_route_table(route_table_id, region=None,
                                       profile=None):
     """
@@ -599,6 +701,7 @@ def get_all_subnet_ids_in_route_table(route_table_id, region=None,
         )
 
 
+@aws_retry()
 def get_subnet_ids_in_zone(vpc_id, zone, region=None, profile=None):
     """
     Args:
@@ -638,6 +741,7 @@ def get_subnet_ids_in_zone(vpc_id, zone, region=None, profile=None):
         raise errors.AnsibleFilterError("No subnets were found")
 
 
+@aws_retry()
 def get_subnet_ids(vpc_id, cidrs, region=None, profile=None):
     """
     Args:
@@ -683,6 +787,7 @@ def get_subnet_ids(vpc_id, cidrs, region=None, profile=None):
         raise errors.AnsibleFilterError("No subnets were found")
 
 
+@aws_retry()
 def get_vpc_id_by_name(name, region, profile=None):
     """
     Args:
@@ -716,10 +821,13 @@ def get_vpc_id_by_name(name, region, profile=None):
         return vpc_id
 
     except Exception as e:
-        raise errors.AnsibleFilterError(
-            "VPC ID for VPC name {0} was not found in region {1}: {2}"
-            .format(name, region, str(e))
-        )
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "VPC ID for VPC name {0} was not found in region {1}: {2}"
+                .format(name, region, str(e))
+            )
 
 
 def vpc_exists(name, region):
@@ -745,6 +853,7 @@ def vpc_exists(name, region):
     return vpc_id
 
 
+@aws_retry()
 def get_ami_images(name, region, arch="x86_64", virt_type="hvm",
                    owner="099720109477", sort=False, sort_by="creationDate",
                    sort_by_tag=False, tags=None, order="desc",
@@ -812,6 +921,7 @@ def get_ami_images(name, region, arch="x86_64", virt_type="hvm",
     return images
 
 
+@aws_retry()
 def get_instances_by_tags(region, tags, return_key="PublicIpAddress",
                           state=None, profile=None):
     """Retrieve instances by 1 or multiple tags.
@@ -854,20 +964,24 @@ def get_instances_by_tags(region, tags, return_key="PublicIpAddress",
                 'Values': [state]
             }
         )
-    reservations = client.describe_instances(Filters=filters)['Reservations']
-    for reservation in reservations:
-        for instance in reservation['Instances']:
-            instances.append(instance.get(return_key))
+    try:
+        reservations = client.describe_instances(Filters=filters)['Reservations']
+        for reservation in reservations:
+            for instance in reservation['Instances']:
+                instances.append(instance.get(return_key))
 
-    if not reservations:
-        raise errors.AnsibleFilterError(
-            "No instance was found with the following tags {0} in region {1}"
-            .format(tags, region)
-        )
-    else:
-        return instances
+        if not reservations:
+            raise errors.AnsibleFilterError(
+                "No instance was found with the following tags {0} in region {1}"
+                .format(tags, region)
+            )
+        else:
+            return instances
+    except Exception as e:
+        raise e
 
 
+@aws_retry()
 def get_instance_by_tags(region, tags, return_key="PublicIpAddress",
                          state=None, profile=None):
 
@@ -886,6 +1000,7 @@ def get_instance_by_tags(region, tags, return_key="PublicIpAddress",
         )
 
 
+@aws_retry()
 def get_instance(name, region, return_key="ip_address", state=None,
                  tag_name='Name', ignore_tag_key=None):
     """
@@ -918,31 +1033,34 @@ def get_instance(name, region, return_key="ip_address", state=None,
     }
     if state:
         filter_by["instance-state-name"] = state
-    connect = boto.ec2.connect_to_region(region)
-    images = connect.get_all_instances(filters=filter_by)
-    if len(images) == 1:
-        instance = images[0].instances[0]
-        result = getattr(instance, return_key)
-        return result
-    elif len(images) > 1:
-        if ignore_tag_key:
-            does_not_have_tag_instances = list()
-            for image in images:
-                if ignore_tag_key not in image.instances[0].tags:
-                    instance = images[0].instances[0]
-                    result = getattr(instance, return_key)
-                    does_not_have_tag_instances.append(result)
-            if len(does_not_have_tag_instances) == 1:
-                return does_not_have_tag_instances[0]
-        raise errors.AnsibleFilterError(
-            "More than 1 instance was found with name {0} in region {1}"
-            .format(name, region)
-        )
-    elif len(images) == 0:
-        raise errors.AnsibleFilterError(
-            "No instance was found with name {0} in region {1}"
-            .format(name, region)
-        )
+    try:
+        connect = boto.ec2.connect_to_region(region)
+        images = connect.get_all_instances(filters=filter_by)
+        if len(images) == 1:
+            instance = images[0].instances[0]
+            result = getattr(instance, return_key)
+            return result
+        elif len(images) > 1:
+            if ignore_tag_key:
+                does_not_have_tag_instances = list()
+                for image in images:
+                    if ignore_tag_key not in image.instances[0].tags:
+                        instance = images[0].instances[0]
+                        result = getattr(instance, return_key)
+                        does_not_have_tag_instances.append(result)
+                if len(does_not_have_tag_instances) == 1:
+                    return does_not_have_tag_instances[0]
+            raise errors.AnsibleFilterError(
+                "More than 1 instance was found with name {0} in region {1}"
+                .format(name, region)
+            )
+        elif len(images) == 0:
+            raise errors.AnsibleFilterError(
+                "No instance was found with name {0} in region {1}"
+                .format(name, region)
+            )
+    except Exception as e:
+        raise e
 
 
 def get_older_images(name, region, exclude_ami=None,
@@ -1030,6 +1148,7 @@ def get_instance_id_by_name(name, region, state="running"):
     return instance_id
 
 
+@aws_retry()
 def get_acm_arn(domain_name, region, profile=None):
     """Retrieve the attributes of a certificate if it exists or all certs.
     Args:
@@ -1042,17 +1161,21 @@ def get_acm_arn(domain_name, region, profile=None):
     """
     arn = None
     client = aws_client(region, 'acm', profile)
-    acm_certs = client.list_certificates()['CertificateSummaryList']
-    for cert in acm_certs:
-        if domain_name == cert['DomainName']:
-            arn = cert['CertificateArn']
-            return arn
-    if not arn:
-        raise errors.AnsibleFilterError(
-            'Certificate {0} does not exist'.format(domain_name)
-        )
+    try:
+        acm_certs = client.list_certificates()['CertificateSummaryList']
+        for cert in acm_certs:
+            if domain_name == cert['DomainName']:
+                arn = cert['CertificateArn']
+                return arn
+        if not arn:
+            raise errors.AnsibleFilterError(
+                'Certificate {0} does not exist'.format(domain_name)
+            )
+    except Exception as e:
+        raise e
 
 
+@aws_retry()
 def get_elasticache_endpoint(region, name, profile=None):
     """Retrieve the endpoint name of the elasticache cluster.
     Args:
@@ -1067,11 +1190,15 @@ def get_elasticache_endpoint(region, name, profile=None):
     try:
         return client.describe_cache_clusters(CacheClusterId=name)['CacheClusters'][0]['ConfigurationEndpoint']['Address']
     except Exception as e:
-        raise errors.AnsibleFilterError(
-            'Could not retreive ip for {0}: {1}'.format(name, str(e))
-        )
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive ip for {0}: {1}'.format(name, str(e))
+            )
 
 
+@aws_retry()
 def get_redshift_endpoint(region, name, profile=None):
     """Retrieve the endpoint name of the redshift cluster.
     Args:
@@ -1088,11 +1215,15 @@ def get_redshift_endpoint(region, name, profile=None):
     try:
         return client.describe_clusters(ClusterIdentifier=name)['Clusters'][0]['Endpoint']['Address']
     except Exception as e:
-        raise errors.AnsibleFilterError(
-            'Could not retreive ip for {0}: {1}'.format(name, str(e))
-        )
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive ip for {0}: {1}'.format(name, str(e))
+            )
 
 
+@aws_retry()
 def get_redshift_ip(region, name, return_key='private', profile=None):
     """Retrieve the private or public ip of the redshift cluster
     Args:
@@ -1122,11 +1253,15 @@ def get_redshift_ip(region, name, return_key='private', profile=None):
                 ip = node[return_key]
                 return ip
     except Exception as e:
-        raise errors.AnsibleFilterError(
-            'Could not retreive ip for {0}: {1}'.format(name, str(e))
-        )
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive ip for {0}: {1}'.format(name, str(e))
+            )
 
 
+@aws_retry()
 def get_route53_id(region, name, profile=None):
     """Retrieve the id of a route53 hosted zone.
     Args:
@@ -1152,9 +1287,12 @@ def get_route53_id(region, name, profile=None):
             )
 
     except Exception as e:
-        raise errors.AnsibleFilterError(
-            'Could not retreive zone id for {0}: {1}'.format(name, str(e))
-        )
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive zone id for {0}: {1}'.format(name, str(e))
+            )
 
 
 class FilterModule(object):

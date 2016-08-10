@@ -1,4 +1,20 @@
-# Ansible Filters for AWS in aws.py
+# AWS.py 
+
+## Each aws filter is surrounded by the aws_retry decorator.
+The aws_retry decorator will retry based on the following exceptions
+* RequestLimitExceeded
+* Unavailable
+* ServiceUnavailable
+* InternalFailure
+* InternalError
+* "\w+.NotFound" (Eventual Consistency)
+
+The aws_retry decorator takes on the following kwargs.
+* tries (number of times to try) default=10
+* delay (initial delay between retries in seconds) default=3
+* backoff (This is the multiplier, that will double on each retry) default=2
+
+## Ansible Filters for AWS in aws.py
 * get_vpc_id_by_name
 * get_ami_image_id
 * get_instance_id_by_name
