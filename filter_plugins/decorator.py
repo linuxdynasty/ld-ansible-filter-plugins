@@ -42,7 +42,7 @@ class CloudRetry(object):
         """
         def deco(f):
             @wraps(f)
-            def retry(*args, **kwargs):
+            def retry_func(*args, **kwargs):
                 max_tries, max_delay = tries, delay
                 while max_tries > 1:
                     try:
@@ -64,6 +64,6 @@ class CloudRetry(object):
                             raise e
                 return f(*args, **kwargs)
 
-            return retry  # true decorator
+            return retry_func  # true decorator
 
         return deco
