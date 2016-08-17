@@ -1333,6 +1333,19 @@ def get_route53_id(region, name, profile=None):
 
 @AWSRetry.backoff()
 def get_instance_tag_name_by_ip(region, ip, ip_type='private', profile=None):
+    """
+    Args:
+        region (str): The AWS region.
+        ip (str): The internal or public ip address.
+
+    Kwargs:
+        ip_type (str): private or public. default=private
+        profile (str): The aws profile name that is set in ~/.aws/credentials
+
+    Basic Usage:
+        >>> get_instance_tag_name_by_ip('us-west-2', '10.10.10.10', 'private')
+        foobar
+    """
     client = aws_client(region, 'ec2', profile)
     filters = list()
     try:
