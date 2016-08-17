@@ -1331,6 +1331,42 @@ def get_route53_id(region, name, profile=None):
             )
 
 
+@AWSRetry.backoff()
+def get_instance_tag_name_by_ip(region, ip, ip_type='private', profile=None):
+    client = aws_client(region, 'ec2', profile)
+    filters = list()
+    try:
+        if ip_type == 'private':
+            filter_by = 'private-ip-address'
+        else:
+            filter_by = 'ip-address'
+
+        filters.append(
+            {
+                'Name': filter_by,
+                'Values': [ip]
+            }
+        )
+
+        instance = (
+            client
+            .describe_instances(
+                Filters=filters
+            )['Reservations'][0]['Instances'][0]
+        )
+        for tag in instance['Tags']:
+            if tag['Key'] == 'Name':
+                return tag['Value']
+
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive tag name for {0}: {1}'.format(ip, str(e))
+            )
+
+
 class FilterModule(object):
     ''' Ansible core jinja2 filters '''
 
@@ -1367,4 +1403,5 @@ class FilterModule(object):
             'get_elasticache_endpoint': get_elasticache_endpoint,
             'get_vpc_ids_from_names': get_vpc_ids_from_names,
             'get_route53_id': get_route53_id,
+            'get_instance_tag_name_by_ip': get_instance_tag_name_by_ip,
         }
