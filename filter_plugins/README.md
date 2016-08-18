@@ -1,7 +1,7 @@
 # AWS.py 
 
 ## Each aws filter is surrounded by the aws_retry decorator.
-The aws_retry decorator will retry based on the following exceptions
+The AWSRetry.backoff() decorator will retry based on the following exceptions
 * RequestLimitExceeded
 * Unavailable
 * ServiceUnavailable
@@ -9,7 +9,7 @@ The aws_retry decorator will retry based on the following exceptions
 * InternalError
 * "\w+.NotFound" (Eventual Consistency)
 
-The aws_retry decorator takes on the following kwargs.
+The AWSRetry.backoff() decorator takes on the following kwargs.
 * tries (number of times to try) default=10
 * delay (initial delay between retries in seconds) default=3
 * backoff (This is the multiplier, that will double on each retry) default=2
