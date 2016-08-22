@@ -79,6 +79,17 @@ class ActionModule(ActionBase):
 
         result = super(ActionModule, self).run(tmp, task_vars)
         results = dict()
+        if self._task._role:
+            if self.source_dir == 'vars':
+                self.source_dir = (
+                    path.join(self._task._role._role_path, self.source_dir)
+                )
+            else:
+                self.source_dir = (
+                    path.join(
+                        self._task._role._role_path, 'vars', self.source_dir
+                    )
+                )
         if path.exists(self.source_dir):
             for root_dir, filenames in self._traverse_dir_depth():
                 failed, err_msg, updated_results = (
@@ -132,7 +143,7 @@ class ActionModule(ActionBase):
             try:
                 if re.search(r'{0}$'.format(file_type), filename):
                     return True
-            except Exception as e:
+            except Exception:
                 err_msg = 'Invalid regular expression: {0}'.format(file_type)
                 raise AnsibleError(err_msg)
         return False
@@ -151,6 +162,12 @@ class ActionModule(ActionBase):
         err_msg = ''
         for filename in var_files:
             stop_iter = False
+            # Never include main.yml from a role, as that is the default included by the role
+            if self._task._role:
+                if filename == 'main.yml':
+                    stop_iter = True
+                    continue
+
             filepath = path.join(root_dir, filename)
             if self.files_matching:
                 if not self.matcher.search(filename):
