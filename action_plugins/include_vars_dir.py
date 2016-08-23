@@ -51,7 +51,7 @@ class ActionModule(ActionBase):
         else:
             self.matcher = None
         self.ignore_files = self._task.args.get('ignore_files', list())
-        if isinstance(self.ignore_files, basestring):
+        if isinstance(self.ignore_files, str):
             self.ignore_files = self.ignore_files.split()
         elif isinstance(self.ignore_files, dict):
             return {
