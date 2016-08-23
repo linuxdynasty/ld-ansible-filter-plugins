@@ -3,7 +3,7 @@ import unittest
 
 import botocore
 
-from aws import AWSRetry
+from filter_plugins.aws import AWSRetry
 
 class RetryTestCase(unittest.TestCase):
 
