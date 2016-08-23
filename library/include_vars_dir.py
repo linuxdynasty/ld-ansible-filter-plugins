@@ -55,19 +55,27 @@ options:
 '''
 
 EXAMPLES = """
-# Include vars of stuff.yml into the 'stuff' variable (2.2).
-- include_vars_dir:
-    file: stuff.yml
-    name: stuff
-# Conditionally decide to load in variables into 'plans' when x is 0, otherwise do not. (2.2)
-- include_vars_dir: file=contingency_plan.yml name=plans
-  when: x == 0
-# Load a variable file based on the OS type, or a default if not found.
-- include_vars_dir: "{{ item }}"
-  with_first_found:
-   - "{{ ansible_distribution }}.yml"
-   - "{{ ansible_os_family }}.yml"
-   - "default.yml"
-# bare include (free-form)
-- include_vars_dir: myvars.yml
+- name: include all yml files in group_vars/all and all nested directories
+  include_vars_dir:
+    dir: 'group_vars/all'
+
+- name: include all yml files in group_vars/all and all nested directories and save the output in test.
+  include_vars_dir:
+    dir: 'group_vars/all'
+    name: test
+
+- name: include all yml files in group_vars/services
+  include_vars_dir:
+    dir: 'group_vars/services'
+    depth: 1
+
+- name: include only bastion.yml files
+  include_vars_dir:
+    dir: 'vars'
+    files_matching: 'bastion.yml'
+
+- name: include only all yml files exception bastion.yml
+  include_vars_dir:
+    dir: 'vars'
+    ignore_files: 'bastion.yml'
 """
