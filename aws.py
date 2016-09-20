@@ -1402,6 +1402,42 @@ def get_instance_tag_name_by_ip(region, ip, ip_type='private', profile=None):
             )
 
 
+@AWSRetry.backoff()
+def get_role_arn(name, region=None, profile=None):
+    """ Retrieve the ARN of an IAM role.
+    Args:
+        name: (str): The name of the IAM role.
+
+    Kwargs:
+        region (str): The AWS region.
+        profile (str): The ~/.aws/credentials profile name to use
+
+    Basic Usage:
+        >>> arn = get_role_arn('test', region='us-west-2')
+        'arn:aws:iam::12345678910:role/test'
+
+    Returns:
+        String
+    """
+    client = aws_client(region, 'iam', profile)
+    try:
+        role = (
+            client.get_role(
+                RoleName=name
+            )['Role']
+        )
+        return_key = role['Arn']
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                "IAM role {0} was not found".format(name)
+            )
+
+    return return_key
+
+
 class FilterModule(object):
     ''' Ansible core jinja2 filters '''
 
@@ -1439,4 +1475,5 @@ class FilterModule(object):
             'get_vpc_ids_from_names': get_vpc_ids_from_names,
             'get_route53_id': get_route53_id,
             'get_instance_tag_name_by_ip': get_instance_tag_name_by_ip,
+            'get_role_arn': get_role_arn,
         }
