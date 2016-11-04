@@ -800,11 +800,12 @@ def get_subnet_ids_in_zone(vpc_id, zone, region=None, profile=None):
 
 
 @AWSRetry.backoff()
-def get_subnet_ids(vpc_id, cidrs, region=None, profile=None):
+def get_subnet_ids(vpc_id, cidrs=None, region=None, profile=None):
     """
     Args:
         vpc_id (str): The vpc id in which the subnet you are looking
-            for lives in,
+            for lives in.
+    Kwargs:
         cidrs (list): The list of cidrs that you are performing the search on.
         region (str): The AWS region.
 
@@ -825,13 +826,16 @@ def get_subnet_ids(vpc_id, cidrs, region=None, profile=None):
             {
                 'Name': 'vpc-id',
                 'Values': [vpc_id],
-            },
+            }
+        ]
+    }
+    if cidrs:
+        params['Filters'].append(
             {
                 'Name': 'cidrBlock',
                 'Values': cidrs,
             }
-        ]
-    }
+        )
     subnets = (
         sorted(
             client.describe_subnets(**params)['Subnets'],
