@@ -54,6 +54,12 @@ The AWSRetry.backoff() decorator takes on the following kwargs.
 * get_elasticache_endpoint
 * get_vpc_ids_from_names
 * get_route53_id
+* get_instance_tag_name_by_ip
+* get_sg_subnets
+* get_role_arn
+* get_instances_attr_by_ids
+* get_instance_ips_in_asg
+* get_cloudfront_dns
 
 ## AWS Examples.
 Example placement of the filters below *roles/vpc_deploy/vars/main.yml*

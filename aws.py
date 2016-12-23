@@ -227,6 +227,30 @@ def get_sg_cidrs(name, vpc_id, region, profile=None):
         raise e
 
 
+def get_sg_subnets(name, vpc_id, region, profile=None):
+    """
+    Args:
+        name (str): The name of the security group you are looking for.
+        vpc_id (str): The VPC id where this security group resides.
+        region (str): The AWS region.
+
+    Basic Usage:
+        >>> name = 'ProductionELB'
+        >>> region = 'us-west-2'
+        >>> vpc_id = 'vpc-123456'
+        >>> subnets = get_sg_subnets(name, vpc_id, region)
+        >>> print subnets
+
+    Returns:
+        String
+    """
+    cidrs = get_sg_cidrs(name, vpc_id, region, profile)
+    subnets = list()
+    for subnet in cidrs:
+        subnets.append(subnet.split("/")[0])
+    return subnets
+
+
 @AWSRetry.backoff()
 def get_sg(name, vpc_id, region, profile=None):
     """
@@ -1442,6 +1466,109 @@ def get_role_arn(name, region=None, profile=None):
     return return_key
 
 
+@AWSRetry.backoff()
+def get_instances_attr_by_ids(region, ids,
+                              return_attribute='PrivateIpAddress',
+                              profile=None):
+    """ Return an attribute of the EC2 instances.
+    Args:
+        region (str): The AWS region.
+
+    Kwargs:
+        ids (list): List of EC2 Instance IDs.
+        return_attribute (str): The value of the attribute to return.
+        profile (str): The aws profile name that is set in ~/.aws/credentials
+
+    Basic Usage:
+        >>> get_instance_by_id('us-west-2', ['i-123456'], 'private')
+        ['10.0.0.100']
+    """
+    client = aws_client(region, 'ec2', profile)
+    instance_attributes = list()
+    try:
+        reservations  = (
+            client.describe_instances(InstanceIds=ids)['Reservations']
+        )
+        for reservation in reservations:
+            for instance in reservation['Instances']:
+                if instance['State']['Name'] == 'running' or instance['State']['Name'] == 'pending':
+                    instance_attributes.append(instance[return_attribute])
+
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive the instance attribute for instances {0}: {1}'.format(ids, str(e))
+            )
+    return instance_attributes
+
+@AWSRetry.backoff()
+def get_instance_ips_in_asg(region, asg_name, profile=None):
+    """ Return the ip addresses of the instances in an Auto Scale Group
+    Args:
+        region (str): The AWS region.
+        asg_name (str): The name of the autoscale group.
+
+    Kwargs:
+        profile (str): The aws profile name that is set in ~/.aws/credentials
+
+    Basic Usage:
+        >>> get_instance_ips_in_asg('us-west-2', 'web-app', 'private')
+        ['10.0.0.100', '10.0.0.101']
+    """
+    client = aws_client(region, 'autoscaling', profile)
+    try:
+        instances = (
+            client
+            .describe_auto_scaling_groups(
+                AutoScalingGroupNames=[asg_name]
+            )['AutoScalingGroups'][0]['Instances']
+        )
+        instance_ids = map(lambda instance: instance['InstanceId'], instances)
+        ip_addresses = get_instances_attr_by_ids(region, instance_ids)
+
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive the instance ip address for instances in {0}: {1}'.format(asg_name, str(e))
+            )
+    return ip_addresses
+
+
+@AWSRetry.backoff()
+def get_cloudfront_dns(region, dist_id, profile=None):
+    """ Return the dns name of the cloudfront distribution id.
+    Args:
+        region (str): The AWS region.
+        dist_id (str): distribution id
+
+    Kwargs:
+        profile (str): The aws profile name that is set in ~/.aws/credentials
+
+    Basic Usage:
+        >>> get_cloudfront_dns('us-west-2', 'E210F8LHXOD5FK')
+        ['1234567890abcd.cloudfront.net']
+    """
+    client = aws_client(region, 'cloudfront', profile)
+    domain_name = None
+    try:
+        domain_name = (
+            client
+            .get_distribution(Id=dist_id)['Distribution']['DomainName']
+        )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retreive the dns name for CloudFront Dist ID {0}: {1}'.format(dist_id, str(e))
+            )
+    return domain_name
+
+
 class FilterModule(object):
     ''' Ansible core jinja2 filters '''
 
@@ -1479,5 +1606,9 @@ class FilterModule(object):
             'get_vpc_ids_from_names': get_vpc_ids_from_names,
             'get_route53_id': get_route53_id,
             'get_instance_tag_name_by_ip': get_instance_tag_name_by_ip,
+            'get_sg_subnets': get_sg_subnets,
             'get_role_arn': get_role_arn,
+            'get_instances_attr_by_ids': get_instances_attr_by_ids,
+            'get_instance_ips_in_asg': get_instance_ips_in_asg,
+            'get_cloudfront_dns': get_cloudfront_dns,
         }
