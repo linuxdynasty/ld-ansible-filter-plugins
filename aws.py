@@ -1569,6 +1569,51 @@ def get_cloudfront_dns(region, dist_id, profile=None):
     return domain_name
 
 
+@AWSRetry.backoff()
+def get_sns_topic_arn(topic_name, region=None, profile=None, token=None):
+    """
+    Args:
+        topic_name (str): The SNS topic name to search for.
+        region (str): The AWS region.
+
+    Kwargs:
+        profile (str): The aws profile name that is set in ~/.aws/credentials
+        token (str): Token returned by the previous ListTopics request.
+
+    Basic Usage:
+        >>> get_sns_topic_arn('sns_topic_name', 'eu-west-1')
+        arn:aws:sns:eu-west-1:000123456789:sns_topic_name
+    """
+    client = aws_client(region, 'sns', profile)
+    try:
+        if token:
+            topics = client.list_topics(NextToken=token)
+            next_token = topics['NextToken']
+        else:
+            topics = client.list_topics()
+            next_token = None
+
+        topic_list = topics['Topics']
+
+        for topic in topic_list:
+            if topic['TopicArn'].split(':')[5] == topic_name:
+                return topic['TopicArn']
+            else:
+                if next_token:
+                    return get_sns_topic_arn(token=next_toke, topic_name=topic_name)
+                else:
+                    raise errors.AnsibleFilterError(
+                        'SNS topic {0} does not exist'.format(topic_name)
+                    )
+    except Exception as e:
+        if isinstance(e, botocore.exceptions.ClientError):
+            raise e
+        else:
+            raise errors.AnsibleFilterError(
+                'Could not retrieve SNS topic arn for {0}: {1}'.format(topic_name, str(e))
+            )
+
+
 class FilterModule(object):
     ''' Ansible core jinja2 filters '''
 
@@ -1611,4 +1656,5 @@ class FilterModule(object):
             'get_instances_attr_by_ids': get_instances_attr_by_ids,
             'get_instance_ips_in_asg': get_instance_ips_in_asg,
             'get_cloudfront_dns': get_cloudfront_dns,
+            'get_sns_topic_arn': get_sns_topic_arn,
         }
