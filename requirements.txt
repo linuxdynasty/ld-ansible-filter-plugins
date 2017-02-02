@@ -1,0 +1,4 @@
+awsretry
+boto
+boto3
+botocore

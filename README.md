@@ -8,6 +8,9 @@ Every filter I write will contain information in this README.md, that shows the 
 
 # AWS.py 
 
+In order to use these plugins please install boto, boto3, botocore, and awsretry
+`pip install boto, boto3, botocore, awsretry` or `pip install -r requirements.txt`
+
 ## Each aws filter is surrounded by the aws_retry decorator.
 The AWSRetry.backoff() decorator will retry based on the following exceptions
 * RequestLimitExceeded
