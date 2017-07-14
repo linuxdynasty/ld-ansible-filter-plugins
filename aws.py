@@ -12,7 +12,7 @@ import boto.ec2.autoscale
 import boto3
 
 from ansible import errors
-from awsretry import import AWSRetry
+from awsretry import AWSRetry
 
 
 @AWSRetry.backoff()
